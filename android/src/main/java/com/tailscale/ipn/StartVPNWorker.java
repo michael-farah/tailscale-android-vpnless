@@ -32,14 +32,12 @@ public final class StartVPNWorker extends Worker {
         UninitializedApp app = UninitializedApp.get();
         boolean ableToStartVPN = app.isAbleToStartVPN();
         if (ableToStartVPN) {
-            if (VpnService.prepare(app) == null) {
-                // We're ready and have permissions, start the VPN
-                app.startVPN();
-                return Result.success();
-            }
+            // VPNless mode: no VpnService.prepare check needed
+            app.startVPN();
+            return Result.success();
         }
 
-        // We aren't ready to start the VPN or don't have permission, open the Tailscale app.
+        // We aren't ready to start the VPN, open the Tailscale app.
         TSLog.e("StartVPNWorker", "Tailscale isn't ready to start the VPN, notify the user.");
 
         // Send notification

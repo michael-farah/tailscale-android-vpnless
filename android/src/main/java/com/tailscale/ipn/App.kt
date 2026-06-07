@@ -729,6 +729,21 @@ open class UninitializedApp : Application() {
 
     getUnencryptedPrefs().edit().putStringSet(SELECTED_APPS_KEY, packageNames.toSet()).apply()
 
+    // VPNless: apply native routing rules via root shell
+    applicationScope.launch {
+      try {
+        val manager = RootTailscaleManager(this@App)
+        val allPkgs = packageManager.getInstalledApplications(0).map { it.packageName }
+        manager.applySplitTunneling(
+          packageNames,
+          allPkgs,
+          allowSelectedPackages()
+        )
+      } catch (e: Exception) {
+        TSLog.e(TAG, "Failed to apply split tunneling rules: $e")
+      }
+    }
+
     this.restartVPN()
   }
 
@@ -738,6 +753,16 @@ open class UninitializedApp : Application() {
         .putBoolean(ALLOW_SELECTED_APPS_KEY, !allowSelectedPackages())
         .apply()
     getUnencryptedPrefs().edit().putStringSet(SELECTED_APPS_KEY, setOf()).apply()
+
+    // VPNless: clear and re-apply native routing rules
+    applicationScope.launch {
+      try {
+        val manager = RootTailscaleManager(this@App)
+        manager.clearAllRoutingRules()
+      } catch (e: Exception) {
+        TSLog.e(TAG, "Failed to clear split tunneling rules: $e")
+      }
+    }
 
     this.restartVPN()
   }

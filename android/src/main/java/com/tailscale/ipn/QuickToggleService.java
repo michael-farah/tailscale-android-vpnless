@@ -79,21 +79,17 @@ public class QuickToggleService extends TileService {
         onTileClick();
     }
 
-    private void onTileClick() {                                                                                                                          
-      UninitializedApp app = UninitializedApp.get();                                                                                                    
-      boolean needsToStop;                                                                                                                            
+    private void onTileClick() {
+      UninitializedApp app = UninitializedApp.get();
+      boolean needsToStop;
       synchronized (lock) {
           needsToStop = isRunning;
       }
       if (needsToStop) {
           app.stopVPN();
       } else {
-          boolean vpnPrepared = App.get().getAppScopedViewModel().getVpnPrepared().getValue();
-          if (vpnPrepared) {
-              app.startVPN();
-          } else {
-              launchMainActivity();
-          }
+          // VPNless mode: no permission check needed
+          app.startVPN();
       }
     }
 

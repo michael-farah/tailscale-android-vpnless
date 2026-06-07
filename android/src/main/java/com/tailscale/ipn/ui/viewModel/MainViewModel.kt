@@ -4,7 +4,6 @@ package com.tailscale.ipn.ui.viewModel
 
 import android.content.Intent
 import android.net.Uri
-import android.net.VpnService
 import androidx.activity.result.ActivityResultLauncher
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -187,14 +186,9 @@ class MainViewModel(private val appViewModel: AppViewModel) : IpnViewModel() {
   }
 
   fun showVPNPermissionLauncherIfUnauthorized() {
-    val vpnIntent = VpnService.prepare(App.get())
-    TSLog.d("VpnPermissions", "vpnIntent=$vpnIntent")
-    if (vpnIntent != null) {
-      vpnPermissionLauncher?.launch(vpnIntent)
-    } else {
-      appViewModel.setVpnPrepared(true)
-      startVPN()
-    }
+    // VPNless mode: no VPN permission required
+    appViewModel.setVpnPrepared(true)
+    startVPN()
     _requestVpnPermission.value = false // reset
   }
 

@@ -5,7 +5,6 @@ package com.tailscale.ipn.ui.viewModel
 
 import android.app.Application
 import android.net.Uri
-import android.net.VpnService
 import android.util.Log
 import androidx.activity.result.ActivityResultLauncher
 import androidx.documentfile.provider.DocumentFile
@@ -78,17 +77,8 @@ class AppViewModel(application: Application, private val taildropPrompt: Flow<Un
   }
 
   private fun prepareVpn() {
-    // Check if the user has granted permission yet.
-    if (!vpnPrepared.value) {
-      val vpnIntent = VpnService.prepare(getApplication())
-      if (vpnIntent != null) {
-        setVpnPrepared(false)
-        Log.d(TAG, "VpnService.prepare returned non-null intent")
-      } else {
-        setVpnPrepared(true)
-        Log.d(TAG, "VpnService.prepare returned null intent, VPN is already prepared")
-      }
-    }
+    // VPNless mode: root daemon doesn't need VpnService.prepare()
+    setVpnPrepared(true)
   }
 
   fun checkIfTaildropDirectorySelected() {
