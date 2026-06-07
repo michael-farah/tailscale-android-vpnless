@@ -149,6 +149,9 @@ dependencies {
     implementation("com.patrykandpatrick.vico:compose:1.15.0")
     implementation("com.patrykandpatrick.vico:compose-m3:1.15.0")
 
+    // Root shell access via libsu
+    implementation "com.github.topjohnwu.libsu:core:5.3.0"
+
     // Tailscale dependencies.
     implementation ':libtailscale@aar'
 
