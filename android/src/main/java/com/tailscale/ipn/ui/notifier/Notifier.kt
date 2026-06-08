@@ -5,6 +5,7 @@ package com.tailscale.ipn.ui.notifier
 
 import com.tailscale.ipn.App
 import com.tailscale.ipn.BuildConfig
+import com.tailscale.ipn.ui.localapi.Client
 import com.tailscale.ipn.ui.model.Empty
 import com.tailscale.ipn.ui.model.Health
 import com.tailscale.ipn.ui.model.Ipn
@@ -72,6 +73,15 @@ object Notifier {
   @OptIn(ExperimentalSerializationApi::class)
   fun start(scope: CoroutineScope) {
     TSLog.d(TAG, "Starting Notifier")
+
+    // VPNless: skip the libtailscale notification watcher.
+    // DaemonStatusPoller (started by IPNService) handles state bridging
+    // from the root tailscaled daemon into the Notifier.
+    if (Client.useRootDaemon) {
+      TSLog.d(TAG, "VPNless mode: skipping libtailscale notification watcher")
+      return
+    }
+
     if (!::app.isInitialized) {
       App.get()
     }
@@ -131,6 +141,10 @@ object Notifier {
 
   fun stop() {
     TSLog.d(TAG, "Stopping Notifier")
+    if (Client.useRootDaemon) {
+      // No-op in VPNless mode
+      return
+    }
     manager?.let {
       it.stop()
       manager = null
