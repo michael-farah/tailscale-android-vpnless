@@ -164,6 +164,11 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
     // at which point the device may have already registered with the wrong hostname.
     MDMSettings.loadFrom(lazy { getEncryptedPrefs() }, rm)
 
+    // VPNless mode: route all local API calls through the root tailscaled daemon.
+    // The in-process Go backend (libtailscale) still initializes for login/auth
+    // compatibility but is not used for operational API calls.
+    Client.useRootDaemon = true
+
     if (storedUri != null && storedUri.toString().startsWith("content://")) {
       startLibtailscale(storedUri.toString(), hardwareAttestation)
     } else {

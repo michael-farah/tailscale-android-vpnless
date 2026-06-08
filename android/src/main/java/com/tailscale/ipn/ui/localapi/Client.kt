@@ -209,8 +209,7 @@ class Client(private val scope: CoroutineScope) {
 
   fun startLoginInteractive(responseHandler: (Result<Unit>) -> Unit) {
     if (useRootDaemon) {
-      // Login interactive uses the in-process backend for browser flow
-      responseHandler(Result.failure(Exception("Not supported in VPNless mode")))
+      getRootClient()?.startLoginInteractive(responseHandler)
       return
     }
     return post(Endpoint.LOGIN_INTERACTIVE, responseHandler = responseHandler)

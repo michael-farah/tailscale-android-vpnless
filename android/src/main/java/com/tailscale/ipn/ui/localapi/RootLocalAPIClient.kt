@@ -10,6 +10,8 @@ import com.tailscale.ipn.ui.model.IpnLocal
 import com.tailscale.ipn.ui.model.IpnState
 import com.tailscale.ipn.ui.model.StableNodeID
 import com.tailscale.ipn.ui.model.Tailcfg
+import com.tailscale.ipn.ui.notifier.Notifier
+import com.tailscale.ipn.ui.util.set
 import com.tailscale.ipn.util.TSLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -170,6 +172,40 @@ class RootLocalAPIClient(private val context: Context) {
         ))
       } catch (e: Exception) {
         TSLog.e(TAG, "ping error: $e")
+        responseHandler(Result.failure(e))
+      }
+    }
+  }
+
+  /**
+   * Start interactive login via the root daemon.
+   * Captures the auth URL from 'tailscale login' output and feeds it
+   * into the Notifier's browseToURL flow for UI display.
+   */
+  fun startLoginInteractive(responseHandler: (Result<Unit>) -> Unit) {
+    CoroutineScope(Dispatchers.IO).launch {
+      try {
+        val result = com.topjohnwu.superuser.Shell.cmd(
+          "${RootTailscaleManager.TAILSCALE_BIN} login 2>&1"
+        ).exec()
+
+        if (result.isSuccess) {
+          // Check if output contains a URL (auth URL)
+          val authUrl = result.out.joinToString("\n").let { output ->
+            Regex("""https://[^\s]+""").find(output)?.value
+          }
+          if (authUrl != null) {
+            TSLog.d(TAG, "Login URL: $authUrl")
+            Notifier.browseToURL.set(authUrl)
+          }
+          responseHandler(Result.success(Unit))
+        } else {
+          val err = result.out.joinToString("\n")
+          TSLog.e(TAG, "Login failed: $err")
+          responseHandler(Result.failure(Exception(err)))
+        }
+      } catch (e: Exception) {
+        TSLog.e(TAG, "login error: $e")
         responseHandler(Result.failure(e))
       }
     }
