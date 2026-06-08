@@ -152,8 +152,7 @@ dependencies {
     // Root shell access via libsu
     implementation "com.github.topjohnwu.libsu:core:5.3.0"
 
-    // Tailscale dependencies.
-    implementation ':libtailscale@aar'
+    // VPNless: libtailscale AAR removed — root daemon handles all connectivity
 
     // Integration Tests
     androidTestImplementation composeBom
