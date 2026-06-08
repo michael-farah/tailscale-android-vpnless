@@ -11,7 +11,6 @@ import android.util.Log
 import com.tailscale.ipn.util.TSLog
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
-import libtailscale.Libtailscale
 
 object NetworkChangeCallback {
 
@@ -204,8 +203,7 @@ object NetworkChangeCallback {
               .sortedBy { if (it.gateway is java.net.Inet4Address) 0 else 1 }
               .firstNotNullOfOrNull { it.gateway?.hostAddress } ?: ""
 
-      Libtailscale.onGatewayChanged(gatewayIP)
-      Libtailscale.onDNSConfigChanged(info.linkProps.interfaceName)
+      // VPNless: root daemon handles its own network monitoring
     }
   }
 }
