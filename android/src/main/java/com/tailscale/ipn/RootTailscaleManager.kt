@@ -4,9 +4,11 @@ package com.tailscale.ipn
 
 import android.content.Context
 import android.util.Log
+import com.tailscale.ipn.ui.model.IpnState
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 
 class RootTailscaleManager(private val context: Context) {
   companion object {
@@ -60,9 +62,33 @@ class RootTailscaleManager(private val context: Context) {
     }
   }
 
-  /** Check root is available
+  /** Fetch raw JSON status from the daemon (tailscale status --json) */
+  suspend fun getStatusJson(): String? = withContext(Dispatchers.IO) {
+    try {
+      val result = Shell.cmd("$TAILSCALE_BIN status --json 2>/dev/null").exec()
+      if (result.isSuccess) {
+        result.out.joinToString("\n")
+      } else null
+    } catch (e: Exception) {
+      Log.w(TAG, "getStatusJson error: $e")
+      null
+    }
+  }
 
-ailable */
+  private val statusDecoder = Json { ignoreUnknownKeys = true }
+
+  /** Fetch parsed status from the daemon */
+  suspend fun getStatus(): IpnState.Status? = withContext(Dispatchers.IO) {
+    val json = getStatusJson() ?: return@withContext null
+    try {
+      statusDecoder.decodeFromString<IpnState.Status>(json)
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to parse status JSON: $e")
+      null
+    }
+  }
+
+  /** Check root is available */
   suspend fun isRootAvailable(): Boolean = withContext(Dispatchers.IO) {
     Shell.getShell().isRoot
   }
