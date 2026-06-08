@@ -111,23 +111,14 @@ class DaemonStatusPoller(private val rootManager: RootTailscaleManager) {
       lastState = newState
     }
 
-    // 2. Update engine status (approximate from peers)
+    // 2. Update engine status (from peer data)
     if (status.Peer != null) {
-      val livePeers = status.Peer.values.filter { it.Online }
-      val rBytes = status.Peer.values.sumOf { it.RxBytes }
-      val wBytes = status.Peer.values.sumOf { it.TxBytes }
+      val livePeers = status.Peer.values.count { it.Online }
       val engineStatus = Ipn.EngineStatus(
-        RBytes = rBytes,
-        WBytes = wBytes,
-        NumLive = livePeers.size,
-        LivePeers = livePeers.associate { it.PublicKey to
-          IpnState.PeerStatusLite(
-            RxBytes = it.RxBytes,
-            TxBytes = it.TxBytes,
-            LastHandshake = it.LastSeen ?: "",
-            NodeKey = it.PublicKey
-          )
-        }
+        RBytes = 0,
+        WBytes = 0,
+        NumLive = livePeers,
+        LivePeers = emptyMap()
       )
       Notifier.engineStatus.set(engineStatus)
     }

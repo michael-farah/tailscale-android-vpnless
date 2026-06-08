@@ -215,7 +215,7 @@ class RootLocalAPIClient(private val context: Context) {
    * Get bug report ID.
    */
   fun bugReportId(responseHandler: (Result<BugReportID>) -> Unit) {
-    responseHandler(Result.success(BugReportID("")))
+    responseHandler(Result.success(""))
   }
 
   /**
@@ -236,7 +236,7 @@ class RootLocalAPIClient(private val context: Context) {
               ID = profile.ID,
               DisplayName = profile.DisplayName,
               LoginName = profile.LoginName,
-              ProfilePicURL = profile.ProfilePicURL,
+              ProfilePicURL = profile.ProfilePicURL ?: "",
             ),
             LocalUserID = profile.ID.toString(),
           )

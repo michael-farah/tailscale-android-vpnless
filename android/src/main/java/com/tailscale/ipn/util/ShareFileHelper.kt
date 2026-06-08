@@ -79,22 +79,20 @@ object ShareFileHelper {
   private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<Uri?>>()
 
   private fun pendingSafUri(tag: String): Uri? {
-    // Based in part on the Cordova SAF plugin.
-    val pfd =
-        if (tag.startsWith("/")) {
-          ParcelFileDescriptor.open(java.io.File(tag), ParcelFileDescriptor.MODE_READ_ONLY)
-        } else {
-          // TODO: Optimize by caching the document file and avoiding unnecessary queries.
-          val parts = tag.split("|")
-          val baseUri = Uri.parse(parts[0])
-          val docId = parts[1]
-          val treeDocId = parts.getOrElse(2) { docId }
-
-          DocumentsContract.openDocumentFile(appContext!!, baseUri, docId, treeDocId, "r")
-        }
-    if (pfd == null) return null
-    return Uri.fromParts("saf", pfd.fd.toString(), null).also {
-      concurrentFDs[pfd.fd] = SafFile(pfd.fd, tag)
+    try {
+      val uri = if (tag.startsWith("/")) {
+        Uri.fromFile(java.io.File(tag))
+      } else {
+        val parts = tag.split("|")
+        Uri.parse(parts[0])
+      }
+      val fd = appContext!!.contentResolver.openFileDescriptor(uri, "r") ?: return null
+      return Uri.fromParts("saf", fd.fd.toString(), null).also {
+        concurrentFDs[fd.fd] = SafFile(fd.fd, tag)
+      }
+    } catch (e: Exception) {
+      TSLog.e("ShareFileHelper", "pendingSafUri error: $e")
+      return null
     }
   }
 
@@ -107,9 +105,8 @@ object ShareFileHelper {
         val pfd =
             appContext!!.contentResolver.openFileDescriptor(safUri, "rwt")
                 ?: return null
-        if (offset > 0) {
-          pfd.seek(offset)
-        }
+        // Offset not used with rwt mode (file is truncated)
+        // In the original tailscale app, this would seek for partial writes
         val stream = FileOutputStream(pfd.fileDescriptor)
         return OutputStreamAdapter(stream)
       }

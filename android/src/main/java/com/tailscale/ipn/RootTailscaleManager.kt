@@ -39,7 +39,7 @@ class RootTailscaleManager(private val context: Context) {
     try {
       val result = Shell.cmd("$TAILSCALE_BIN up --accept-dns=false 2>&1").exec()
       if (!result.isSuccess) {
-        Log.e(TAG, "tailscale up failed: ${result.out.joinToString(\"\\n\")}")
+        Log.e(TAG, "tailscale up failed: " + result.out.joinToString("\n"))
       }
       result.isSuccess
     } catch (e: Exception) {
@@ -53,7 +53,7 @@ class RootTailscaleManager(private val context: Context) {
     try {
       val result = Shell.cmd("$TAILSCALE_BIN down 2>&1").exec()
       if (!result.isSuccess) {
-        Log.e(TAG, "tailscale down failed: ${result.out.joinToString(\"\\n\")}")
+        Log.e(TAG, "tailscale down failed: " + result.out.joinToString("\n"))
       }
       result.isSuccess
     } catch (e: Exception) {
