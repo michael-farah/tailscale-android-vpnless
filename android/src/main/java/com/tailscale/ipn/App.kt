@@ -223,6 +223,11 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
     ShareFileHelper.init(this, app, directFileRoot, applicationScope)
     Request.setApp(app)
     Notifier.setApp(app)
+    // Notifier.start() is normally called here to watch the libtailscale notification bus.
+    // In VPNless mode, the DaemonStatusPoller (started by IPNService) handles state bridging
+    // from the root tailscaled daemon into the Notifier, overriding the in-process Go backend's
+    // "Stopped" state with the daemon's actual state. Both can coexist: libtailscale handles
+    // login/auth/local API while the root daemon handles connectivity.
     Notifier.start(applicationScope)
   }
 
