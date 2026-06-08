@@ -12,20 +12,14 @@ import com.tailscale.ipn.ui.model.IpnLocal
 import com.tailscale.ipn.ui.model.IpnState
 import com.tailscale.ipn.ui.model.StableNodeID
 import com.tailscale.ipn.ui.model.Tailcfg
-import com.tailscale.ipn.ui.util.InputStreamAdapter
 import com.tailscale.ipn.util.TSLog
-import java.nio.charset.Charset
 import kotlin.reflect.KType
 import kotlin.reflect.typeOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.serializer
-import libtailscale.FilePart
 
 private object Endpoint {
   const val DEBUG = "debug"
@@ -80,7 +74,7 @@ class Client(private val scope: CoroutineScope) {
   private val TAG = Client::class.simpleName
 
   // Access libtailscale.Application lazily (only when not using root daemon)
-  private val app: libtailscale.Application? by lazy {
+  private val app: Any? by lazy {
     if (!useRootDaemon) App.get().getLibtailscaleApp() else null
   }
 
@@ -245,43 +239,8 @@ class Client(private val scope: CoroutineScope) {
       files: Collection<Ipn.OutgoingFile>,
       responseHandler: (Result<String>) -> Unit
   ) {
-    if (useRootDaemon) {
-      responseHandler(Result.failure(Exception("Taildrop not yet supported in VPNless mode")))
-      return
-    }
-
-    val manifest = Json.encodeToString(files)
-    val manifestPart = FilePart()
-    manifestPart.body = InputStreamAdapter(manifest.byteInputStream(Charset.defaultCharset()))
-    manifestPart.filename = "manifest.json"
-    manifestPart.contentType = "application/json"
-    val parts = mutableListOf(manifestPart)
-
-    try {
-      parts.addAll(
-          files.map { file ->
-            val stream =
-                context.contentResolver.openInputStream(file.uri)
-                    ?: throw Exception("Error opening file stream")
-
-            val part = FilePart()
-            part.filename = file.Name
-            part.contentLength = file.DeclaredSize
-            part.body = InputStreamAdapter(stream)
-            part
-          })
-    } catch (e: Exception) {
-      parts.forEach { it.body.close() }
-      TSLog.e(TAG, "Error creating file upload body: $e")
-      responseHandler(Result.failure(e))
-      return
-    }
-
-    return postMultipart(
-        "${Endpoint.FILE_PUT}/${peerId}",
-        FileParts(parts),
-        responseHandler,
-    )
+    // Taildrop not supported in VPNless mode
+    responseHandler(Result.failure(Exception("Taildrop not yet supported in VPNless mode")))
   }
 
   private inline fun <reified T> get(
@@ -331,22 +290,6 @@ class Client(private val scope: CoroutineScope) {
         .execute()
   }
 
-  private inline fun <reified T> postMultipart(
-      path: String,
-      parts: FileParts,
-      noinline responseHandler: (Result<T>) -> Unit
-  ) {
-    Request(
-            scope = scope,
-            method = "POST",
-            path = path,
-            parts = parts,
-            timeoutMillis = 24 * 60 * 60 * 1000, // 24 hours
-            responseType = typeOf<T>(),
-            responseHandler = responseHandler)
-        .execute()
-  }
-
   private inline fun <reified T> patch(
       path: String,
       body: ByteArray? = null,
@@ -376,12 +319,15 @@ class Client(private val scope: CoroutineScope) {
   }
 }
 
+/**
+ * HTTP-based request to the tailscaled local API via Android LocalSocket (Unix domain socket).
+ * This replaces the libtailscale.Application.callLocalAPI() mechanism.
+ */
 class Request<T>(
     private val scope: CoroutineScope,
     private val method: String,
     path: String,
     private val body: ByteArray? = null,
-    private val parts: FileParts? = null,
     private val timeoutMillis: Long = 30000,
     private val responseType: KType,
     private val responseHandler: (Result<T>) -> Unit
@@ -390,73 +336,91 @@ class Request<T>(
 
   companion object {
     private const val TAG = "LocalAPIRequest"
-
     private val jsonDecoder = Json { ignoreUnknownKeys = true }
-
-    private lateinit var app: libtailscale.Application
+    private val socketPath = com.tailscale.ipn.RootTailscaleManager.TAILSCALED_SOCK
 
     @JvmStatic
-    fun setApp(newApp: libtailscale.Application) {
-      app = newApp
+    fun setApp(newApp: Any?) {
+      // No-op in VPNless mode
     }
   }
 
   @OptIn(ExperimentalSerializationApi::class)
   fun execute() {
     scope.launch(Dispatchers.IO) {
-      TSLog.d(TAG, "Executing request:${method}:${fullPath} on app $app")
+      TSLog.d(TAG, "Executing HTTP request: $method $fullPath via socket $socketPath")
       try {
-        val resp =
-            if (parts != null) app.callLocalAPIMultipart(timeoutMillis, method, fullPath, parts)
-            else
-                app.callLocalAPI(
-                    timeoutMillis,
-                    method,
-                    fullPath,
-                    body?.let { InputStreamAdapter(it.inputStream()) })
-        val respData = resp.bodyBytes() ?: ByteArray(0)
+        // Connect to the daemon's Unix socket using Android LocalSocket
+        val localSocket = android.net.LocalSocket()
+        localSocket.connect(android.net.LocalSocketAddress(
+          socketPath,
+          android.net.LocalSocketAddress.Namespace.FILESYSTEM
+        ))
+        localSocket.soTimeout = timeoutMillis.toInt()
 
-        @Suppress("UNCHECKED_CAST")
-        val response: Result<T> =
-            when (responseType) {
-              typeOf<String>() -> Result.success(respData.decodeToString() as T)
-              typeOf<Unit>() -> Result.success(Unit as T)
-              else ->
-                  try {
+        localSocket.use { sock ->
+          val out = sock.getOutputStream()
+          val input = sock.getInputStream()
+
+          // Build the HTTP/1.1 request
+          val requestBuilder = StringBuilder()
+          requestBuilder.append("$method $fullPath HTTP/1.1\r\n")
+          requestBuilder.append("Host: localtailscale\r\n")
+          requestBuilder.append("Connection: close\r\n")
+          if (body != null) {
+            requestBuilder.append("Content-Length: ${body.size}\r\n")
+          }
+          requestBuilder.append("\r\n")
+
+          out.write(requestBuilder.toString().toByteArray(Charsets.UTF_8))
+          if (body != null) {
+            out.write(body)
+          }
+          out.flush()
+
+          // Read the full response
+          val responseBytes = input.readBytes()
+          val responseStr = responseBytes.toString(Charsets.UTF_8)
+          val headerBodySplit = responseStr.split("\r\n\r\n", limit = 2)
+          val headerLines = headerBodySplit[0].split("\r\n")
+          val statusLine = headerLines.firstOrNull() ?: "HTTP/1.1 500"
+          val statusCode = statusLine.split(" ").getOrNull(1)?.toIntOrNull() ?: 500
+          val responseBody = if (headerBodySplit.size > 1)
+            headerBodySplit[1].toByteArray(Charsets.UTF_8) else ByteArray(0)
+
+          @Suppress("UNCHECKED_CAST")
+          val response: Result<T> =
+              if (statusCode >= 400) {
+                val errMsg = try {
+                  jsonDecoder.decodeFromString<Errors.GenericError>(
+                    responseBody.decodeToString()
+                  ).error
+                } catch (_: Exception) {
+                  responseBody.decodeToString()
+                }
+                Result.failure(Exception("$statusCode: $errMsg"))
+              } else {
+                when (responseType) {
+                  typeOf<String>() -> Result.success(responseBody.decodeToString() as T)
+                  typeOf<Unit>() -> Result.success(Unit as T)
+                  else -> try {
                     Result.success(
-                        jsonDecoder.decodeFromStream(
-                            Json.serializersModule.serializer(responseType), respData.inputStream())
-                            as T)
+                      jsonDecoder.decodeFromString(
+                        Json.serializersModule.serializer(responseType),
+                        responseBody.decodeToString()
+                      ) as T
+                    )
                   } catch (t: Throwable) {
-                    // If we couldn't parse the response body, assume it's an error response
-                    try {
-                      val error =
-                          jsonDecoder.decodeFromStream<Errors.GenericError>(respData.inputStream())
-                      throw Exception(error.error)
-                    } catch (t: Throwable) {
-                      Result.failure(t)
-                    }
+                    Result.success(responseBody.decodeToString() as T)
                   }
-            }
-        if (resp.statusCode() >= 400) {
-          throw Exception(
-              "Request failed with status ${resp.statusCode()}: ${respData.toString(Charset.defaultCharset())}")
+                }
+              }
+          scope.launch { responseHandler(response) }
         }
-        scope.launch { responseHandler(response) }
       } catch (e: Exception) {
         TSLog.e(TAG, "Error executing request:${method}:${fullPath}: $e")
         scope.launch { responseHandler(Result.failure(e)) }
       }
     }
-  }
-}
-
-class FileParts(private val parts: List<FilePart>) : libtailscale.FileParts {
-  override fun get(i: Int): FilePart {
-    return parts[i]
-  }
-
-  override fun len(): Int {
-    return parts.size
   }
 }
