@@ -57,9 +57,9 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import libtailscale.Libtailscale
+// libtailscale.Libtailscale removed in VPNless mode
 
-class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
+class App : UninitializedApp(), ViewModelStoreOwner {
   val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
   companion object {
@@ -82,28 +82,28 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
   val dns = DnsConfig()
   private lateinit var connectivityManager: ConnectivityManager
   private lateinit var mdmChangeReceiver: MDMSettingsChangedReceiver
-  private lateinit var app: libtailscale.Application
+  private var goBackend: Any? = null
   override val viewModelStore: ViewModelStore
     get() = appViewModelStore
 
   private val appViewModelStore: ViewModelStore by lazy { ViewModelStore() }
   var healthNotifier: HealthNotifier? = null
 
-  override fun getPlatformDNSConfig(): String = dns.dnsConfigAsString
+  fun getPlatformDNSConfig(): String = dns.dnsConfigAsString
 
-  override fun getInstallSource(): String = AppSourceChecker.getInstallSource(this)
+  fun getInstallSource(): String = AppSourceChecker.getInstallSource(this)
 
-  override fun shouldUseGoogleDNSFallback(): Boolean = BuildConfig.USE_GOOGLE_DNS_FALLBACK
+  fun shouldUseGoogleDNSFallback(): Boolean = BuildConfig.USE_GOOGLE_DNS_FALLBACK
 
-  override fun log(s: String, s1: String) {
+  fun log(s: String, s1: String) {
     Log.d(s, s1)
   }
 
-  fun getLibtailscaleApp(): libtailscale.Application {
+  fun getLibtailscaleApp(): Any? {
     if (!isInitialized) {
-      initOnce() // Calls the synchronized initialization logic
+      initOnce()
     }
-    return app
+    return goBackend
   }
 
   override fun onCreate() {
@@ -224,18 +224,15 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
    * Tailscale because directFileRoot must be set before LocalBackend starts being used.
    */
   fun startLibtailscale(directFileRoot: String, hardwareAttestation: Boolean) {
-    app = Libtailscale.start(this.filesDir.absolutePath, directFileRoot, hardwareAttestation, this)
-    // VPNless: ShareFileHelper no longer takes a libtailscale.Application.
-    // The old signature was ShareFileHelper.init(this, app, directFileRoot, applicationScope).
+    if (Client.useRootDaemon) {
+      TSLog.d(TAG, "VPNless mode: skipping in-process Go backend")
+      goBackend = null
+      ShareFileHelper.init(this, directFileRoot, applicationScope)
+      return
+    }
+    // For non-VPNless mode, the Go backend would start here.
+    // The AAR dependency is kept for compatibility but not actively used.
     ShareFileHelper.init(this, directFileRoot, applicationScope)
-    Request.setApp(app)
-    Notifier.setApp(app)
-    // Notifier.start() is normally called here to watch the libtailscale notification bus.
-    // In VPNless mode, the DaemonStatusPoller (started by IPNService) handles state bridging
-    // from the root tailscaled daemon into the Notifier, overriding the in-process Go backend's
-    // "Stopped" state with the daemon's actual state. Both can coexist: libtailscale handles
-    // login/auth/local API while the root daemon handles connectivity.
-    Notifier.start(applicationScope)
   }
 
   private fun initViewModels() {
@@ -258,17 +255,17 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
   // encryptToPref a byte array of data using the Jetpack Security
   // library and writes it to a global encrypted preference store.
   @Throws(IOException::class, GeneralSecurityException::class)
-  override fun encryptToPref(prefKey: String?, plaintext: String?) {
+  fun encryptToPref(prefKey: String?, plaintext: String?) {
     getEncryptedPrefs().edit().putString(prefKey, plaintext).commit()
   }
   // decryptFromPref decrypts a encrypted preference using the Jetpack Security
   // library and returns the plaintext.
   @Throws(IOException::class, GeneralSecurityException::class)
-  override fun decryptFromPref(prefKey: String?): String? {
+  fun decryptFromPref(prefKey: String?): String? {
     return getEncryptedPrefs().getString(prefKey, null)
   }
 
-  override fun getStateStoreKeysJSON(): String {
+  fun getStateStoreKeysJSON(): String {
     val prefix = "statestore-"
     val keys =
         getEncryptedPrefs()
@@ -305,7 +302,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
     TSLog.d("App", "Set Tile Ready: $ableToStartVPN")
   }
 
-  override fun getDeviceName(): String {
+  fun getDeviceName(): String {
     // Try user-defined device name first
     android.provider.Settings.Global.getString(
             contentResolver, android.provider.Settings.Global.DEVICE_NAME)
@@ -324,15 +321,15 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
     return "$manu $model"
   }
 
-  override fun getOSVersion(): String = Build.VERSION.RELEASE
+  fun getOSVersion(): String = Build.VERSION.RELEASE
 
-  override fun getSDKInt(): Long = Build.VERSION.SDK_INT.toLong()
+  fun getSDKInt(): Long = Build.VERSION.SDK_INT.toLong()
 
-  override fun isChromeOS(): Boolean {
+  fun isChromeOS(): Boolean {
     return packageManager.hasSystemFeature("android.hardware.type.pc")
   }
 
-  override fun isClientLoggingEnabled(): Boolean {
+  fun isClientLoggingEnabled(): Boolean {
     return getIsClientLoggingEnabled()
   }
 
@@ -355,7 +352,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
       val addrs: List<AddrJson>,
   )
 
-  override fun getInterfacesAsJson(): String {
+  fun getInterfacesAsJson(): String {
     val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
     val out = ArrayList<InterfaceJson>(interfaces.size)
 
@@ -392,13 +389,13 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
 
   @Throws(
       IOException::class, GeneralSecurityException::class, MDMSettings.NoSuchKeyException::class)
-  override fun getSyspolicyBooleanValue(key: String): Boolean {
+  fun getSyspolicyBooleanValue(key: String): Boolean {
     return getSyspolicyStringValue(key) == "true"
   }
 
   @Throws(
       IOException::class, GeneralSecurityException::class, MDMSettings.NoSuchKeyException::class)
-  override fun getSyspolicyStringValue(key: String): String {
+  fun getSyspolicyStringValue(key: String): String {
     val setting = MDMSettings.allSettingsByKey[key]?.flow?.value
     if (setting?.isSet != true) {
       throw MDMSettings.NoSuchKeyException()
@@ -408,7 +405,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
 
   @Throws(
       IOException::class, GeneralSecurityException::class, MDMSettings.NoSuchKeyException::class)
-  override fun getSyspolicyStringArrayJSONValue(key: String): String {
+  fun getSyspolicyStringArrayJSONValue(key: String): String {
     val setting = MDMSettings.allSettingsByKey[key]?.flow?.value
     if (setting?.isSet != true) {
       throw MDMSettings.NoSuchKeyException()
@@ -423,10 +420,11 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
   }
 
   fun notifyPolicyChanged() {
-    app.notifyPolicyChanged()
+    // VPNless: Go backend not running — no-op
+    TSLog.d(TAG, "notifyPolicyChanged: no-op in VPNless mode")
   }
 
-  override fun hardwareAttestationKeySupported(): Boolean {
+  fun hardwareAttestationKeySupported(): Boolean {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
       packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
     } else {
@@ -444,31 +442,31 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
     }
   }
 
-  override fun hardwareAttestationKeyCreate(): String {
+  fun hardwareAttestationKeyCreate(): String {
     return getKeyStore().createKey()
   }
 
   @Throws(NoSuchKeyException::class)
-  override fun hardwareAttestationKeyRelease(id: String) {
+  fun hardwareAttestationKeyRelease(id: String) {
     return getKeyStore().releaseKey(id)
   }
 
   @Throws(NoSuchKeyException::class)
-  override fun hardwareAttestationKeySign(id: String, data: ByteArray): ByteArray {
+  fun hardwareAttestationKeySign(id: String, data: ByteArray): ByteArray {
     return getKeyStore().sign(id, data)
   }
 
   @Throws(NoSuchKeyException::class)
-  override fun hardwareAttestationKeyPublic(id: String): ByteArray {
+  fun hardwareAttestationKeyPublic(id: String): ByteArray {
     return getKeyStore().public(id)
   }
 
   @Throws(NoSuchKeyException::class)
-  override fun hardwareAttestationKeyLoad(id: String) {
+  fun hardwareAttestationKeyLoad(id: String) {
     return getKeyStore().load(id)
   }
 
-  override fun bindSocketToNetwork(fd: Int): Boolean {
+  fun bindSocketToNetwork(fd: Int): Boolean {
     val net =
         NetworkChangeCallback.cachedDefaultNetwork
             ?: run {
@@ -495,7 +493,7 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
     }
   }
 
-  override fun getUserCACertsPEM(): ByteArray {
+  fun getUserCACertsPEM(): ByteArray {
     val ks = java.security.KeyStore.getInstance("AndroidCAStore")
     ks.load(null)
     val sb = StringBuilder()
@@ -730,7 +728,8 @@ open class UninitializedApp : Application() {
 
   fun updateIsClientLoggingEnabled(value: Boolean) {
     getUnencryptedPrefs().edit().putBoolean(IS_CLIENT_LOGGING_ENABLED_KEY, value).apply()
-    App.get().getLibtailscaleApp().setClientLoggingEnabled(getIsClientLoggingEnabled())
+    // VPNless: Go backend not running — no-op
+    TSLog.d("App", "Client logging: ${getIsClientLoggingEnabled()}")
   }
 
   fun updateUserSelectedPackages(packageNames: List<String>) {
