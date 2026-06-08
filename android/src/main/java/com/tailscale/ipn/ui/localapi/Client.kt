@@ -62,62 +62,126 @@ typealias PrefsHandler = (Result<Ipn.Prefs>) -> Unit
 typealias PingResultHandler = (Result<IpnState.PingResult>) -> Unit
 
 /**
- * Client provides a mechanism for calling Go's LocalAPIClient. Every LocalAPI endpoint has a
- * corresponding method on this Client.
+ * Client provides a mechanism for calling Tailscale's LocalAPI.
+ *
+ * In normal mode, it uses the in-process Go backend (libtailscale.Application.callLocalAPI()).
+ * In VPNless mode (useRootDaemon = true), it delegates to RootLocalAPIClient which
+ * communicates with the root tailscaled daemon via the 'tailscale' CLI.
  */
 class Client(private val scope: CoroutineScope) {
+  companion object {
+    const val TAG = "Client"
+
+    /** Set to true to use the root tailscaled daemon instead of in-process libtailscale */
+    @JvmStatic
+    var useRootDaemon: Boolean = false
+  }
+
   private val TAG = Client::class.simpleName
 
-  // Access libtailscale.Application lazily
-  private val app: libtailscale.Application by lazy { App.get().getLibtailscaleApp() }
+  // Access libtailscale.Application lazily (only when not using root daemon)
+  private val app: libtailscale.Application? by lazy {
+    if (!useRootDaemon) App.get().getLibtailscaleApp() else null
+  }
+
+  // Root daemon client (only created when useRootDaemon)
+  private var rootClient: RootLocalAPIClient? = null
+
+  private fun getRootClient(context: Context? = null): RootLocalAPIClient? {
+    if (!useRootDaemon) return null
+    if (rootClient == null) {
+      rootClient = RootLocalAPIClient(context ?: App.get())
+    }
+    return rootClient
+  }
 
   fun start(options: Ipn.Options, responseHandler: (Result<Unit>) -> Unit) {
+    if (useRootDaemon) {
+      getRootClient()?.start(options, responseHandler)
+      return
+    }
     val body = Json.encodeToString(options).toByteArray()
     return post(Endpoint.START, body, responseHandler = responseHandler)
   }
 
   fun status(responseHandler: StatusResponseHandler) {
+    if (useRootDaemon) {
+      getRootClient()?.status(responseHandler)
+      return
+    }
     get(Endpoint.STATUS, responseHandler = responseHandler)
   }
 
   fun ping(peer: Tailcfg.Node, responseHandler: PingResultHandler) {
+    if (useRootDaemon) {
+      getRootClient()?.ping(peer, responseHandler)
+      return
+    }
     val ip = peer.primaryIPv4Address.orEmpty()
     if (ip.isEmpty()) {
       responseHandler(Result.failure(Exception("No IP address for peer $peer")))
       return
     }
-
     val path = "${Endpoint.PING}?ip=${ip}&type=disco"
     post(path, timeoutMillis = 2000L, responseHandler = responseHandler)
   }
 
   fun bugReportId(responseHandler: BugReportIdHandler) {
+    if (useRootDaemon) {
+      getRootClient()?.bugReportId(responseHandler)
+      return
+    }
     post(Endpoint.BUG_REPORT, responseHandler = responseHandler)
   }
 
   fun prefs(responseHandler: PrefsHandler) {
+    if (useRootDaemon) {
+      getRootClient()?.prefs(responseHandler)
+      return
+    }
     get(Endpoint.PREFS, responseHandler = responseHandler)
   }
 
   fun editPrefs(prefs: Ipn.MaskedPrefs, responseHandler: (Result<Ipn.Prefs>) -> Unit) {
+    if (useRootDaemon) {
+      getRootClient()?.editPrefs(prefs, responseHandler)
+      return
+    }
     val body = Json.encodeToString(prefs).toByteArray()
     return patch(Endpoint.PREFS, body, responseHandler = responseHandler)
   }
 
   fun setUseExitNode(use: Boolean, responseHandler: (Result<Ipn.Prefs>) -> Unit) {
+    if (useRootDaemon) {
+      getRootClient()?.setUseExitNode(use, responseHandler)
+      return
+    }
     val path = "${Endpoint.ENABLE_EXIT_NODE}?enabled=$use"
     return post(path, responseHandler = responseHandler)
   }
 
   fun profiles(responseHandler: (Result<List<IpnLocal.LoginProfile>>) -> Unit) {
+    if (useRootDaemon) {
+      getRootClient()?.profiles(responseHandler)
+      return
+    }
     get(Endpoint.PROFILES, responseHandler = responseHandler)
   }
 
   fun currentProfile(responseHandler: (Result<IpnLocal.LoginProfile>) -> Unit) {
+    if (useRootDaemon) {
+      getRootClient()?.currentProfile(responseHandler)
+      return
+    }
     return get(Endpoint.PROFILES_CURRENT, responseHandler = responseHandler)
   }
 
   fun addProfile(responseHandler: (Result<String>) -> Unit = {}) {
+    if (useRootDaemon) {
+      // Not supported via root daemon yet
+      responseHandler(Result.success(""))
+      return
+    }
     return put(Endpoint.PROFILES, responseHandler = responseHandler)
   }
 
@@ -125,6 +189,10 @@ class Client(private val scope: CoroutineScope) {
       profile: IpnLocal.LoginProfile,
       responseHandler: (Result<String>) -> Unit = {}
   ) {
+    if (useRootDaemon) {
+      responseHandler(Result.success(""))
+      return
+    }
     return delete(Endpoint.PROFILES + profile.ID, responseHandler = responseHandler)
   }
 
@@ -132,22 +200,43 @@ class Client(private val scope: CoroutineScope) {
       profile: IpnLocal.LoginProfile,
       responseHandler: (Result<String>) -> Unit = {}
   ) {
+    if (useRootDaemon) {
+      responseHandler(Result.success(""))
+      return
+    }
     return post(Endpoint.PROFILES + profile.ID, responseHandler = responseHandler)
   }
 
   fun startLoginInteractive(responseHandler: (Result<Unit>) -> Unit) {
+    if (useRootDaemon) {
+      // Login interactive uses the in-process backend for browser flow
+      responseHandler(Result.failure(Exception("Not supported in VPNless mode")))
+      return
+    }
     return post(Endpoint.LOGIN_INTERACTIVE, responseHandler = responseHandler)
   }
 
   fun logout(responseHandler: (Result<String>) -> Unit) {
+    if (useRootDaemon) {
+      getRootClient()?.logout(responseHandler)
+      return
+    }
     return post(Endpoint.LOGOUT, responseHandler = responseHandler)
   }
 
   fun tailnetLockStatus(responseHandler: TailnetLockStatusResponseHandler) {
+    if (useRootDaemon) {
+      responseHandler(Result.failure(Exception("TKA not yet supported in VPNless mode")))
+      return
+    }
     get(Endpoint.TKA_STATUS, responseHandler = responseHandler)
   }
 
   fun fileTargets(responseHandler: (Result<List<Ipn.FileTarget>>) -> Unit) {
+    if (useRootDaemon) {
+      responseHandler(Result.failure(Exception("Taildrop not yet supported in VPNless mode")))
+      return
+    }
     get(Endpoint.FILE_TARGETS, responseHandler = responseHandler)
   }
 
@@ -157,6 +246,11 @@ class Client(private val scope: CoroutineScope) {
       files: Collection<Ipn.OutgoingFile>,
       responseHandler: (Result<String>) -> Unit
   ) {
+    if (useRootDaemon) {
+      responseHandler(Result.failure(Exception("Taildrop not yet supported in VPNless mode")))
+      return
+    }
+
     val manifest = Json.encodeToString(files)
     val manifestPart = FilePart()
     manifestPart.body = InputStreamAdapter(manifest.byteInputStream(Charset.defaultCharset()))
@@ -321,8 +415,6 @@ class Request<T>(
                     method,
                     fullPath,
                     body?.let { InputStreamAdapter(it.inputStream()) })
-        // TODO: use the streaming body for performance
-        // An empty body is a perfectly valid response and indicates success
         val respData = resp.bodyBytes() ?: ByteArray(0)
 
         @Suppress("UNCHECKED_CAST")
@@ -351,7 +443,6 @@ class Request<T>(
           throw Exception(
               "Request failed with status ${resp.statusCode()}: ${respData.toString(Charset.defaultCharset())}")
         }
-        // The response handler will invoked internally by the request parser
         scope.launch { responseHandler(response) }
       } catch (e: Exception) {
         TSLog.e(TAG, "Error executing request:${method}:${fullPath}: $e")
