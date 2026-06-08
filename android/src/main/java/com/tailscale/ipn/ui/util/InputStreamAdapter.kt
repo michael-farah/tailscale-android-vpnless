@@ -5,8 +5,13 @@ package com.tailscale.ipn.ui.util
 
 import java.io.InputStream
 
-class InputStreamAdapter(private val inputStream: InputStream) : libtailscale.InputStream {
-  override fun read(): ByteArray? {
+/**
+ * Adapter converting a Java InputStream into a chunked read interface.
+ * This is a plain Kotlin class (no libtailscale interface dependency)
+ * used for reading data from content URIs and file streams.
+ */
+class InputStreamAdapter(private val inputStream: InputStream) {
+  fun read(): ByteArray? {
     val b = ByteArray(4096)
     val i = inputStream.read(b)
     if (i == -1) {
@@ -15,7 +20,7 @@ class InputStreamAdapter(private val inputStream: InputStream) : libtailscale.In
     return b.sliceArray(0 ..< i)
   }
 
-  override fun close() {
+  fun close() {
     inputStream.close()
   }
 }

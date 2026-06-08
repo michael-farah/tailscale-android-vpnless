@@ -6,10 +6,13 @@ package com.tailscale.ipn.ui.util
 import com.tailscale.ipn.util.TSLog
 import java.io.OutputStream
 
-// This class adapts a Java OutputStream to the libtailscale.OutputStream interface.
-class OutputStreamAdapter(private val outputStream: OutputStream) : libtailscale.OutputStream {
-  // writes data to the outputStream in its entirety. Returns -1 on error.
-  override fun write(data: ByteArray): Long {
+/**
+ * Adapter converting a Java OutputStream into a data-writing interface.
+ * This is a plain Kotlin class (no libtailscale interface dependency)
+ * used for writing Taildrop files to SAF content URIs.
+ */
+class OutputStreamAdapter(private val outputStream: OutputStream) {
+  fun write(data: ByteArray): Long {
     return try {
       outputStream.write(data)
       outputStream.flush()
@@ -20,7 +23,7 @@ class OutputStreamAdapter(private val outputStream: OutputStream) : libtailscale
     }
   }
 
-  override fun close() {
+  fun close() {
     outputStream.close()
   }
 }

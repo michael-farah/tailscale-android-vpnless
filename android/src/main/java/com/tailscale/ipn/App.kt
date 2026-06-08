@@ -225,7 +225,9 @@ class App : UninitializedApp(), libtailscale.AppContext, ViewModelStoreOwner {
    */
   fun startLibtailscale(directFileRoot: String, hardwareAttestation: Boolean) {
     app = Libtailscale.start(this.filesDir.absolutePath, directFileRoot, hardwareAttestation, this)
-    ShareFileHelper.init(this, app, directFileRoot, applicationScope)
+    // VPNless: ShareFileHelper no longer takes a libtailscale.Application.
+    // The old signature was ShareFileHelper.init(this, app, directFileRoot, applicationScope).
+    ShareFileHelper.init(this, directFileRoot, applicationScope)
     Request.setApp(app)
     Notifier.setApp(app)
     // Notifier.start() is normally called here to watch the libtailscale notification bus.
