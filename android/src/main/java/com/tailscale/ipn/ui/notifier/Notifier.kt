@@ -60,7 +60,9 @@ object Notifier {
 
   private val userProfiles = mutableMapOf<String, Tailcfg.UserProfile>()
 
-  private lateinit var app: libtailscale.Application
+  // VPNless: these libtailscale types are only used when useRootDaemon is false.
+  // They still compile because the AAR is present in the build dependencies.
+  private var app: libtailscale.Application? = null
   private var manager: libtailscale.NotificationManager? = null
 
   @Synchronized
@@ -142,7 +144,6 @@ object Notifier {
   fun stop() {
     TSLog.d(TAG, "Stopping Notifier")
     if (Client.useRootDaemon) {
-      // No-op in VPNless mode
       return
     }
     manager?.let {

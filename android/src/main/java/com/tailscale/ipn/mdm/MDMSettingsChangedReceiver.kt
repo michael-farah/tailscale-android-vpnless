@@ -19,10 +19,8 @@ class MDMSettingsChangedReceiver : BroadcastReceiver() {
 
       MDMSettings.update(App.get(), restrictionsManager)
 
-      // MDM state may have flipped the effective client-logging value
-      // (getIsClientLoggingEnabled forces true under MDM); push the
-      // current effective value so the backend toggles immediately.
-      App.get().getLibtailscaleApp().setClientLoggingEnabled(App.get().getIsClientLoggingEnabled())
+      // VPNless: Go backend not running — logging state only tracked locally.
+      TSLog.d("syspolicy", "Client logging: ${App.get().getIsClientLoggingEnabled()}")
     }
   }
 }
