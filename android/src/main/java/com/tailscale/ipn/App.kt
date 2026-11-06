@@ -33,6 +33,7 @@ import com.tailscale.ipn.ui.model.Ipn
 import com.tailscale.ipn.ui.model.Netmap
 import com.tailscale.ipn.ui.notifier.HealthNotifier
 import com.tailscale.ipn.ui.notifier.Notifier
+import com.tailscale.ipn.ui.util.set
 import com.tailscale.ipn.ui.viewModel.AppViewModel
 import com.tailscale.ipn.ui.viewModel.AppViewModelFactory
 import com.tailscale.ipn.util.FeatureFlags
@@ -165,9 +166,13 @@ class App : UninitializedApp(), ViewModelStoreOwner {
     MDMSettings.loadFrom(lazy { getEncryptedPrefs() }, rm)
 
     // VPNless mode: route all local API calls through the root tailscaled daemon.
-    // The in-process Go backend (libtailscale) still initializes for login/auth
-    // compatibility but is not used for operational API calls.
+    // DaemonStatusPoller will update state when IPNService starts.
+    // The login button is gated by daemonReady (CompletableDeferred).
     Client.useRootDaemon = true
+
+    // Auto-install: download tailscale/tailscaled if missing, then start daemon
+    // This runs async; login() will await daemonReady before proceeding.
+    autoInstallAndStartDaemon()
 
     if (storedUri != null && storedUri.toString().startsWith("content://")) {
       startLibtailscale(storedUri.toString(), hardwareAttestation)
@@ -239,6 +244,85 @@ class App : UninitializedApp(), ViewModelStoreOwner {
     appViewModel =
         ViewModelProvider(this, AppViewModelFactory(this, ShareFileHelper.observeTaildropPrompt()))
             .get(AppViewModel::class.java)
+  }
+
+  /**
+   * Auto-detect the module or install/manage the daemon ourselves.
+   *
+   *  Mode A — magisk-tailscaled module installed:
+   *    - Use module's binary at /data/adb/tailscale/bin/tailscale
+   *    - Socket is auto-resolved (module HOME, root CWD, app data dir)
+   *    - Module manages daemon lifecycle; we just verify it's reachable
+   *
+   *  Mode B — Standalone:
+   *    - Download binaries if missing, start tailscaled daemon
+   *    - Socket at app data dir with explicit --socket
+   *    - We manage daemon lifecycle
+   */
+  private fun autoInstallAndStartDaemon() {
+    applicationScope.launch {
+      val rootManager = RootTailscaleManager(this@App)
+
+      // ── Mode A: Module detected ──────────────────────────────────
+      if (rootManager.detectModule()) {
+        TSLog.d(TAG, "magisk-tailscaled module detected — using module daemon")
+
+        // Give the module's daemon a moment to be ready
+        var daemonUp = false
+        for (i in 1..10) {
+          if (rootManager.isDaemonReachable()) {
+            daemonUp = true
+            break
+          }
+          kotlinx.coroutines.delay(1000)
+        }
+
+        if (!daemonUp) {
+          TSLog.w(TAG, "Module daemon not reachable after 10s, falling back to module's default socket")
+          // Even if not reachable, module's daemon might start later
+        }
+
+        TSLog.d(TAG, "Module daemon ready — signalling daemonReady")
+        Client.daemonReady.complete(Unit)
+        Notifier.setState(Ipn.State.Stopped)
+        startVPN()
+        return@launch
+      }
+
+      // ── Mode B: Standalone (auto-install) ────────────────────────
+      TSLog.d(TAG, "No module detected — using standalone mode")
+      val autoInstall = AutoInstallManager(this@App)
+      autoInstall.init(filesDir.absolutePath)
+
+      if (!autoInstall.isInstalled()) {
+        TSLog.d(TAG, "Tailscale binaries not found, downloading…")
+        val ok = autoInstall.install { progress ->
+          TSLog.d(TAG, "Install progress: $progress")
+        }
+        if (!ok) {
+          TSLog.e(TAG, "Auto-install failed — user will see login fail")
+          // Don't complete daemonReady — login() will time out with error
+          Notifier.setState(Ipn.State.Stopped)
+          return@launch
+        }
+      }
+
+      // Start the tailscaled daemon (if not already running)
+      val daemonStarted = autoInstall.startDaemon()
+      if (!daemonStarted) {
+        TSLog.w(TAG, "Failed to start tailscaled daemon")
+        Notifier.setState(Ipn.State.Stopped)
+        return@launch
+      }
+
+      // Signal that the daemon is ready for login/connect commands
+      TSLog.d(TAG, "Daemon ready — signalling daemonReady")
+      Client.daemonReady.complete(Unit)
+      Notifier.setState(Ipn.State.Stopped)
+
+      // Start the IPNService foreground service to begin status polling
+      startVPN()
+    }
   }
 
   fun setWantRunning(wantRunning: Boolean, onSuccess: (() -> Unit)? = null) {

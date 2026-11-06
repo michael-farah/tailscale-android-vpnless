@@ -132,14 +132,8 @@ class RootLocalAPIClient(private val context: Context) {
   fun logout(responseHandler: (Result<String>) -> Unit) {
     CoroutineScope(Dispatchers.IO).launch {
       try {
-        val result = com.topjohnwu.superuser.Shell.cmd(
-          "${RootTailscaleManager.TAILSCALE_BIN} logout 2>&1"
-        ).exec()
-        if (result.isSuccess) {
-          responseHandler(Result.success(result.out.joinToString("\n")))
-        } else {
-          responseHandler(Result.failure(Exception("Logout failed: ${result.out.joinToString("\n")}")))
-        }
+        val output = rootManager.runTailscaleSubcommand("logout")
+        responseHandler(Result.success(output))
       } catch (e: Exception) {
         TSLog.e(TAG, "logout error: $e")
         responseHandler(Result.failure(e))
@@ -159,14 +153,11 @@ class RootLocalAPIClient(private val context: Context) {
 
     CoroutineScope(Dispatchers.IO).launch {
       try {
-        val result = com.topjohnwu.superuser.Shell.cmd(
-          "${RootTailscaleManager.TAILSCALE_BIN} ping --c 3 --timeout 5s $ip 2>&1"
-        ).exec()
-        val output = result.out.joinToString("\n")
+        val output = rootManager.runTailscaleSubcommand("ping --c 3 --timeout 5s $ip")
         responseHandler(Result.success(
           IpnState.PingResult(
             IP = ip,
-            Err = if (result.isSuccess) "" else output,
+            Err = "",
             LatencySeconds = parsePingLatency(output),
           )
         ))
@@ -185,25 +176,14 @@ class RootLocalAPIClient(private val context: Context) {
   fun startLoginInteractive(responseHandler: (Result<Unit>) -> Unit) {
     CoroutineScope(Dispatchers.IO).launch {
       try {
-        val result = com.topjohnwu.superuser.Shell.cmd(
-          "${RootTailscaleManager.TAILSCALE_BIN} login 2>&1"
-        ).exec()
-
-        if (result.isSuccess) {
-          // Check if output contains a URL (auth URL)
-          val authUrl = result.out.joinToString("\n").let { output ->
-            Regex("""https://[^\s]+""").find(output)?.value
-          }
-          if (authUrl != null) {
-            TSLog.d(TAG, "Login URL: $authUrl")
-            Notifier.browseToURL.set(authUrl)
-          }
-          responseHandler(Result.success(Unit))
-        } else {
-          val err = result.out.joinToString("\n")
-          TSLog.e(TAG, "Login failed: $err")
-          responseHandler(Result.failure(Exception(err)))
+        val output = rootManager.runTailscaleSubcommand("login")
+        // Check if output contains a URL (auth URL)
+        val authUrl = Regex("""https://[^\s]+""").find(output)?.value
+        if (authUrl != null) {
+          TSLog.d(TAG, "Login URL: $authUrl")
+          Notifier.browseToURL.set(authUrl)
         }
+        responseHandler(Result.success(Unit))
       } catch (e: Exception) {
         TSLog.e(TAG, "login error: $e")
         responseHandler(Result.failure(e))

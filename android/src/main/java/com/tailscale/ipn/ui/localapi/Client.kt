@@ -71,6 +71,17 @@ class Client(private val scope: CoroutineScope) {
     /** Set to true to use the root tailscaled daemon instead of in-process libtailscale */
     @JvmStatic
     var useRootDaemon: Boolean = false
+
+    /**
+     * Deferred that completes when the root tailscaled daemon is ready.
+     * [login()] and other API calls await this before proceeding.
+     */
+    @JvmStatic
+    val daemonReady: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred()
+
+    /** Check whether the daemon is ready (non-blocking) */
+    @JvmStatic
+    fun isDaemonReady(): Boolean = daemonReady.isCompleted
   }
 
   private val TAG = Client::class.simpleName
@@ -339,7 +350,9 @@ class Request<T>(
   companion object {
     private const val TAG = "LocalAPIRequest"
     private val jsonDecoder = Json { ignoreUnknownKeys = true }
-    private val socketPath = com.tailscale.ipn.RootTailscaleManager.TAILSCALED_SOCK
+    // Default socket path for local API calls (HTTP via Unix domain socket).
+    // In VPNless mode, the RootLocalAPIClient (CLI-based) is used instead.
+    private val socketPath = com.tailscale.ipn.RootTailscaleManager.APP_SOCK
 
     @JvmStatic
     fun setApp(newApp: Any?) {
